@@ -106,11 +106,11 @@ The possible labels are:
 
 For training and evaluating ViAutoFactCheck, we use the [ViWikiFC](https://arxiv.org/abs/2405.07615), a Vietnamese fact-checking benchmark.  
 
-|           | ViWikiFC |
-|-----------|---------:|
-| **Train** | 16,738   |
-| **Dev**   | 2,090    |
-| **Test**  | 2,091    |
+|           | ViWikiFC | ViNumFC |
+|-----------|---------:|--------:|
+| **Train** | 16,738   | 8,004   |
+| **Dev**   | 2,090    | 999     |
+| **Test**  | 2,091    | 1,005   |
 
 Each claim is paired with relevant context and evidence, and labeled as **Supported**, **Refuted**, or **Not Enough Information (NEI)**.  
 This dataset is suitable for training all three components of the pipeline:  
