@@ -315,3 +315,17 @@ Context: Mill coi phát triển kinh tế là chức năng của đất đai, nh
 Extracted Evidence: <empty>
 Predicted Label: NEI
 ```
+
+
+## Future Improvements
+
+- **Compare with LLMs:** Evaluate large language models (LLMs) as a full pipeline solution or as a substitute for the MRC and CLS modules.  
+- **Additional testing on different datasets:** We have tested on ViNumFc, but results are not yet published due to data availability. Additional evaluation will ensure consistent performance across datasets.  
+- **Build real-world applications:** Integrate the pipeline into tools or applications for practical fact-checking use cases.
+
+---
+
+## Note on Information Retrieval (IR) Module
+
+Currently, the **training and inference of the IR module** are not publicly available due to copyright restrictions on the training data. We plan to publish this module and the **full implementation of our pipeline** as soon as possible.
+
