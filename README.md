@@ -51,7 +51,7 @@ We perform experiments on various number of State-of-the-art (SOTA) models such 
 
 ---
 
-### **Information Retrieval (IR)**
+### **1. Information Retrieval (IR)**
 
 The Information Retrieval component is responsible for finding relevant context for a given claim from a large knowledge base.  
 ViAutoFactCheck uses a **two-stage retrieval strategy** for optimal performance:
