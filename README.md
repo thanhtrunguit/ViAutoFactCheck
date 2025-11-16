@@ -179,8 +179,13 @@ Overall, our pipeline improves **Strict Acc (+9.3%)**, **Verdict Acc (+3.7%)**, 
 
 This example demonstrates how to use the ViAutoFactCheck inference pipeline with a claim and a context.  
 
-**Note:** This example only uses the **Machine Reading Comprehension (MRC)** and **Sequence Classification (CLS)** modules. The **Information Retrieval (IR)** module, which fetches relevant contexts from the knowledge base, will be made public later due to copyright restrictions on the training data.
+**Note:** This example only uses the **Machine Reading Comprehension (MRC)** and **Sequence Classification (CLS)** modules. The **Information Retrieval (IR)** module, which fetches relevant contexts from the knowledge base, will be made public later due to copyright restrictions on the training data. 
 
+We recommend using transformers 4.55.2.
+
+```python
+pip install transformers==4.55.2
+```
 ```python
 import torch
 from transformers import AutoTokenizer, AutoModelForQuestionAnswering, AutoModelForSequenceClassification
