@@ -26,6 +26,8 @@ This challenge motivates the need for **Automated Fact-Checking systems**, which
 - **Understand and extract information** using machine reading comprehension models.  
 - **Verify claims automatically** by comparing statements with retrieved evidence.
 
+---
+
 ### **Project Overview**
 
 **ViAutoFactCheck** is an end-to-end automated fact verification pipeline that integrates three key components to verify claims efficiently and accurately:
@@ -147,3 +149,169 @@ The full pipeline is evaluated using claim verification metrics:
 - **Verification Classification Accuracy (VC Acc)** – Measures the accuracy of the predicted claim label, regardless of whether the retrieved evidence is exactly correct.
 
 > This evaluation framework ensures that each module performs well individually and that the full pipeline reliably verifies claims using retrieved evidence.
+
+## **Results**
+
+We evaluate our full pipeline on the **ViWikiFC** dataset and compare it with the original pipeline reported in the ViWikiFC paper.
+
+<p align="center">
+  <img src="results/result_on_viwiki.png" width="800">
+</p>
+<p align="center"><i>Evaluation on ViWikiFC with SoTA models</i></p>
+
+
+Across all configurations, **InfoXLM consistently delivers the strongest performance** as both an MRC model and a verdict (classification) model. When paired with the *Vietnamese-bi-encoder + PhoRanker* retriever, the best-performing pipeline uses **CafeBERT (for MRC) + InfoXLM (for Verdict Classification)**, achieving:
+
+- **Strict Accuracy:** **0.7633**  
+- **Verdict Accuracy:** **0.8436**  
+- **Evidence Retrieval:** **0.8747**
+
+These results show a clear improvement over the original **ViWikiFC** paper, which reports:
+
+- **Strict Accuracy:** 0.67  
+- **Verdict Accuracy:** 0.8063  
+- **Evidence Retrieval:** 0.7838  
+
+Overall, our pipeline improves **Strict Acc (+9.3%)**, **Verdict Acc (+3.7%)**, and **Evidence Retrieval (+9.1%)** compared to the original baseline. This demonstrates that combining strong retrieval (PhoRanker), robust span extraction (CafeBERT), and powerful multilingual representations (InfoXLM) leads to a significantly more effective fact-verification system.
+
+---
+## **Example Usage**
+
+This example demonstrates how to use the ViAutoFactCheck inference pipeline with a claim and a context.  
+
+**Note:** This example only uses the **Machine Reading Comprehension (MRC)** and **Sequence Classification (CLS)** modules. The **Information Retrieval (IR)** module, which fetches relevant contexts from the knowledge base, will be made public later due to copyright restrictions on the training data.
+
+```python
+import torch
+from transformers import AutoTokenizer, AutoModelForQuestionAnswering, AutoModelForSequenceClassification
+import re
+
+# -----------------------
+# CONFIG
+# -----------------------
+QA_MODEL = "ICTuniverse/CafeBERT-QA-viwikifc-9321-EM"
+CLS_MODEL = "ICTuniverse/infoxlm-FC-viwikifc-8723-Acc"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+MAX_LENGTH = 512
+WINDOW_SIZE = 480
+MIN_STRIDE = 200
+LABEL_ID2NAME = {0: "Support", 1: "Refute", 2: "NEI"}
+
+# -----------------------
+# Simple utils
+# -----------------------
+def tok_len_pair(claim, context, tokenizer):
+    return tokenizer(claim, context, truncation=False, add_special_tokens=True, padding=False, return_length=True)["length"][0]
+
+def context_ids_no_specials(text, tokenizer):
+    return tokenizer(text, add_special_tokens=False)["input_ids"]
+
+def decode_ids(ids, tokenizer):
+    return tokenizer.decode(ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+
+def create_subcontexts_sliding_window(claim, context, tokenizer, max_len=MAX_LENGTH):
+    if tok_len_pair(claim, context, tokenizer) <= max_len:
+        return [context.strip()]
+    ctx_ids = context_ids_no_specials(context, tokenizer)
+    claim_tok_len = len(tokenizer(claim, add_special_tokens=False)["input_ids"])
+    reserve = claim_tok_len + 3
+    window_size = min(WINDOW_SIZE, max_len - reserve)
+    stride = max(MIN_STRIDE, int(window_size * 0.33))
+    step = window_size - stride
+    if step <= 0:
+        step = max(1, window_size // 2)
+    subcontexts = []
+    for start in range(0, len(ctx_ids), step):
+        end = start + window_size
+        window_ids = ctx_ids[start:end]
+        window_text = decode_ids(window_ids, tokenizer)
+        while tok_len_pair(claim, window_text, tokenizer) > max_len and len(window_ids) > 0:
+            window_ids = window_ids[:-1]
+            window_text = decode_ids(window_ids, tokenizer)
+        if window_text.strip():
+            subcontexts.append(window_text.strip())
+    return subcontexts
+
+def answer_question(claim, context, qa_tokenizer, qa_model, max_length=MAX_LENGTH):
+    enc = qa_tokenizer(claim, context, return_tensors="pt", truncation="only_second", max_length=max_length,
+                       return_offsets_mapping=True, padding=True)
+    input_ids = enc["input_ids"].to(DEVICE)
+    attention_mask = enc["attention_mask"].to(DEVICE)
+    offset_mapping = enc["offset_mapping"][0]
+
+    with torch.no_grad():
+        outputs = qa_model(input_ids=input_ids, attention_mask=attention_mask)
+        start_logits = outputs.start_logits[0]
+        end_logits = outputs.end_logits[0]
+
+    start_idx = torch.argmax(start_logits).item()
+    end_idx = torch.argmax(end_logits).item()
+    if end_idx < start_idx:
+        end_idx = start_idx
+
+    start_char, _ = offset_mapping[start_idx].tolist()
+    _, end_char = offset_mapping[end_idx].tolist()
+    return context[start_char:end_char].strip()
+
+def classify_label(claim, evidence, cls_tokenizer, cls_model):
+    enc = cls_tokenizer.encode_plus(claim, evidence or "", truncation=True, max_length=MAX_LENGTH,
+                                    padding="max_length", return_tensors="pt")
+    input_ids = enc["input_ids"].to(DEVICE)
+    attention_mask = enc["attention_mask"].to(DEVICE)
+    with torch.no_grad():
+        logits = cls_model(input_ids=input_ids, attention_mask=attention_mask).logits[0]
+        pred_id = int(torch.argmax(logits))
+    return LABEL_ID2NAME[pred_id]
+
+# -----------------------
+# Main inference function
+# -----------------------
+def infer(claim, context):
+    # 1. Load models
+    qa_tokenizer = AutoTokenizer.from_pretrained(QA_MODEL, use_fast=True)
+    qa_model = AutoModelForQuestionAnswering.from_pretrained(QA_MODEL).to(DEVICE).eval()
+
+    cls_tokenizer = AutoTokenizer.from_pretrained(CLS_MODEL)
+    cls_model = AutoModelForSequenceClassification.from_pretrained(CLS_MODEL).to(DEVICE).eval()
+
+    # 2. Extract evidence using sliding window if needed
+    if tok_len_pair(claim, context, qa_tokenizer) <= MAX_LENGTH:
+        evidence = answer_question(claim, context, qa_tokenizer, qa_model)
+        if len(evidence.strip().split()) < 10:
+            evidence = ''
+    else:
+        subcontexts = create_subcontexts_sliding_window(claim, context, qa_tokenizer)
+        evidence = ""
+        for subctx in subcontexts:
+            seg = answer_question(claim, subctx, qa_tokenizer, qa_model)
+            if seg.strip() and len(seg.strip().split()) > 10:
+                evidence = seg
+                break  # take first non-empty answer
+
+    # 3. Predict label using extracted evidence
+    label = classify_label(claim, evidence, cls_tokenizer, cls_model)
+
+    return {"evidence": evidence, "label": label}
+
+# Example usage
+claim = 'Hồng Kông và Ma Cao đều nằm trong lãnh thổ Trung Quốc, nhưng cả hai vẫn có mức độ tự trị cao.'
+context = 'Mill coi phát triển kinh tế là chức năng của đất đai, nhân lực và vốn. Trong khi đất đai và nhân lực là hai yếu tố sản xuất cơ bản, vốn là "phần tích lũy, trích từ sản phẩm của lao động trước đó." Chỉ có thể gia tăng tài sản nếu đất đai và vốn giúp tăng sản xuất nhanh hơn lực lượng lao động. Lao động năng suất là năng suất của tài sản và vốn cộng lại. "Tốc độ tích lũy vốn tỉ lệ với lao động làm việc năng suất. Lợi nhuận thu được từ việc sử dụng lao động không năng suất chỉ là thu nhập chuyển sang; lao động không năng suất không tạo ra tài sản hay thu nhập". Người lao động năng suất tạo ra tiêu thụ năng suất. Tiêu thụ năng suất là "cái duy trì và gia tăng năng lực năng suất của xã hội." Điều này hàm ý rằng tiêu thụ năng suất là đầu vào cần thiết để duy trì lao động năng suất.'
+
+result = infer(claim, context)
+
+print("\n=== Fact-checking Inference Result ===")
+print(f"Claim: {claim}")
+print(f"Context: {context}\n")
+print(f"Extracted Evidence: {result['evidence'] or '<empty>'}")
+print(f"Predicted Label: {result['label']}")
+
+```
+**This is the expected output of the two modules (MRC and CLS):**
+
+```python
+=== Fact-checking Inference Result ===
+Claim: Hồng Kông và Ma Cao đều nằm trong lãnh thổ Trung Quốc, nhưng cả hai vẫn có mức độ tự trị cao.
+Context: Mill coi phát triển kinh tế là chức năng của đất đai, nhân lực và vốn...
+Extracted Evidence: <empty>
+Predicted Label: NEI
+```
